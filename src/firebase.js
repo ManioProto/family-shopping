@@ -1,38 +1,14 @@
 import { initializeApp } from 'firebase/app';
 import { getDatabase } from 'firebase/database';
 
-// ========================================
-// SETUP INSTRUCTIONS:
-// ========================================
-// 1. Go to https://console.firebase.google.com/
-// 2. Click "Create a project" (or "Add project")
-// 3. Name it something like "family-shopping"
-// 4. Disable Google Analytics (not needed)
-// 5. Once created, click the web icon </> to add a web app
-// 6. Register the app (any nickname is fine)
-// 7. Copy the firebaseConfig values below
-// 8. In the Firebase console, go to "Build" > "Realtime Database"
-// 9. Click "Create Database", choose your region, start in TEST MODE
-// 10. Deploy your app!
-//
-// IMPORTANT: After 30 days, update your database rules to:
-// {
-//   "rules": {
-//     ".read": true,
-//     ".write": true
-//   }
-// }
-// (or set up proper authentication for better security)
-// ========================================
-
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyC2h3vZsRtdIY2VxbHIhjbpKrl08q4SGpI",
+  authDomain: "family-shopping-38d83.firebaseapp.com",
+  databaseURL: "https://family-shopping-38d83-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "family-shopping-38d83",
+  storageBucket: "family-shopping-38d83.firebasestorage.app",
+  messagingSenderId: "186309902276",
+  appId: "1:186309902276:web:834aedad03852ed52eae91"
 };
 
 // Check if Firebase is configured
