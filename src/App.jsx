@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Plus, Check, Settings, X, ShoppingCart, List, ChevronDown, Users, Palette, Trash2 } from 'lucide-react';
+import { Plus, Settings, X, ShoppingCart, List, ChevronDown, Users, Palette, Trash2, Clock } from 'lucide-react';
 import { database, isFirebaseConfigured } from './firebase';
 import { ref, onValue, set, push, remove, update } from 'firebase/database';
 
@@ -15,22 +15,12 @@ const USER_COLOURS = [
   { name: 'Fuchsia', value: '#d946ef', bg: 'rgba(217, 70, 239, 0.15)' },
 ];
 
-// Preset items for suggestions
-const PRESET_ITEMS = [
-  'Milk', 'Bread', 'Eggs', 'Butter', 'Cheese', 'Chicken', 'Beef',
-  'Apples', 'Bananas', 'Tomatoes', 'Onions', 'Potatoes', 'Carrots',
-  'Lettuce', 'Rice', 'Pasta', 'Flour', 'Sugar', 'Coffee', 'Tea',
-  'Yogurt', 'Cream', 'Cereal', 'Honey', 'Garlic', 'Lemons',
-  'Bacon', 'Mince', 'Toilet Paper', 'Dish Soap', 'Laundry Powder'
-];
-
 // Swipeable Item Component
-function SwipeableItem({ children, onDelete, onTap }) {
+function SwipeableItem({ children, onDelete }) {
   const [translateX, setTranslateX] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
   const startX = useRef(0);
   const currentX = useRef(0);
-  const containerRef = useRef(null);
 
   const handleTouchStart = (e) => {
     startX.current = e.touches[0].clientX;
@@ -56,10 +46,6 @@ function SwipeableItem({ children, onDelete, onTap }) {
     if (diff < -80) {
       setTranslateX(-100);
       setTimeout(() => onDelete(), 200);
-    } else if (Math.abs(diff) < 10) {
-      // It was a tap, not a swipe
-      onTap();
-      setTranslateX(0);
     } else {
       // Reset position
       setTranslateX(0);
@@ -75,18 +61,14 @@ function SwipeableItem({ children, onDelete, onTap }) {
       
       {/* Swipeable content */}
       <div
-        ref={containerRef}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        onClick={() => {
-          if (translateX === 0) onTap();
-        }}
         style={{
           transform: `translateX(${translateX}px)`,
           transition: isSwiping ? 'none' : 'transform 0.2s ease-out'
         }}
-        className="relative cursor-pointer"
+        className="relative"
       >
         {children}
       </div>
@@ -112,7 +94,8 @@ export default function App() {
   const [items, setItems] = useState({});
   const [newItem, setNewItem] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [commonItems, setCommonItems] = useState({});
+  const [recentItems, setRecentItems] = useState({});
+  const [showHistory, setShowHistory] = useState(false);
   
   // UI state
   const [textSize, setTextSize] = useState(18);
@@ -213,13 +196,13 @@ export default function App() {
     return () => unsubscribe();
   }, [firebaseReady, currentListId]);
 
-  // Subscribe to common items
+  // Subscribe to recent items
   useEffect(() => {
     if (!firebaseReady || !database) return;
     
-    const commonRef = ref(database, 'commonItems');
-    const unsubscribe = onValue(commonRef, (snapshot) => {
-      setCommonItems(snapshot.val() || {});
+    const recentRef = ref(database, 'recentItems');
+    const unsubscribe = onValue(recentRef, (snapshot) => {
+      setRecentItems(snapshot.val() || {});
     });
     
     return () => unsubscribe();
@@ -276,52 +259,24 @@ export default function App() {
     const newItemRef = push(ref(database, `items/${currentListId}`));
     await set(newItemRef, {
       name,
-      completed: false,
       addedBy: userId,
       addedAt: Date.now()
     });
     
-    // Update common items count
+    // Add to recent items (keep last 25)
     const itemKey = name.toLowerCase().replace(/[^a-z0-9]/g, '_');
-    const currentCount = commonItems[itemKey]?.count || 0;
-    await set(ref(database, `commonItems/${itemKey}`), {
+    await set(ref(database, `recentItems/${itemKey}`), {
       name,
-      count: currentCount + 1
+      lastUsed: Date.now()
     });
     
     setNewItem('');
     setShowSuggestions(false);
   };
 
-  // Toggle item completion
-  const toggleItem = async (itemId) => {
-    const item = items[itemId];
-    if (!item) return;
-    
-    await update(ref(database, `items/${currentListId}/${itemId}`), {
-      completed: !item.completed,
-      completedBy: !item.completed ? userId : null,
-      completedAt: !item.completed ? Date.now() : null
-    });
-  };
-
   // Delete item
   const deleteItem = async (itemId) => {
     await remove(ref(database, `items/${currentListId}/${itemId}`));
-  };
-
-  // Clear completed items
-  const clearCompleted = async () => {
-    const completedIds = Object.entries(items)
-      .filter(([_, item]) => item.completed)
-      .map(([id]) => id);
-    
-    const updates = {};
-    completedIds.forEach(id => {
-      updates[`items/${currentListId}/${id}`] = null;
-    });
-    
-    await update(ref(database), updates);
   };
 
   // Create new list
@@ -362,29 +317,23 @@ export default function App() {
     return allUsers[uid]?.colour || USER_COLOURS[0];
   };
 
-  // Sorted suggestions
+  // Sorted suggestions (for typing)
   const suggestions = useMemo(() => {
     const query = newItem.toLowerCase();
     if (!query) return [];
     
-    const allItems = [
-      ...Object.values(commonItems).map(i => ({ name: i.name, count: i.count })),
-      ...PRESET_ITEMS.filter(p => !Object.values(commonItems).some(c => c.name.toLowerCase() === p.toLowerCase()))
-        .map(name => ({ name, count: 0 }))
-    ];
-    
-    return allItems
+    return Object.values(recentItems)
       .filter(item => item.name.toLowerCase().includes(query))
-      .sort((a, b) => b.count - a.count)
+      .sort((a, b) => b.lastUsed - a.lastUsed)
       .slice(0, 6);
-  }, [newItem, commonItems]);
+  }, [newItem, recentItems]);
 
-  // Quick add items (most common)
-  const quickAddItems = useMemo(() => {
-    return Object.values(commonItems)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 8);
-  }, [commonItems]);
+  // History items (last 25, sorted by most recent)
+  const historyItems = useMemo(() => {
+    return Object.values(recentItems)
+      .sort((a, b) => b.lastUsed - a.lastUsed)
+      .slice(0, 25);
+  }, [recentItems]);
 
   // Text style
   const textStyle = { fontSize: `${textSize}px` };
@@ -393,18 +342,12 @@ export default function App() {
   // Current list
   const currentList = lists[currentListId];
 
-  // Items sorted: incomplete first, then by date
+  // Items sorted by date added (newest first)
   const sortedItems = useMemo(() => {
     return Object.entries(items)
-      .sort((a, b) => {
-        if (a[1].completed !== b[1].completed) {
-          return a[1].completed ? 1 : -1;
-        }
-        return b[1].addedAt - a[1].addedAt;
-      });
+      .sort((a, b) => b[1].addedAt - a[1].addedAt);
   }, [items]);
 
-  const completedCount = Object.values(items).filter(i => i.completed).length;
   const totalCount = Object.keys(items).length;
 
   // Loading state
@@ -494,7 +437,7 @@ export default function App() {
                     style={{ backgroundColor: colour.value }}
                   >
                     {tempColour?.value === colour.value && (
-                      <Check className="w-6 h-6 text-white" />
+                      <div className="w-3 h-3 bg-white rounded-full" />
                     )}
                   </button>
                 ))}
@@ -522,7 +465,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen pb-32">
+    <div className="min-h-screen pb-28">
       {/* Header */}
       <header className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur-sm border-b border-slate-800">
         <div className="max-w-lg mx-auto px-4 py-4">
@@ -548,54 +491,21 @@ export default function App() {
             </button>
           </div>
           
-          {/* Progress */}
+          {/* Item count */}
           {totalCount > 0 && (
-            <div className="mt-3">
-              <div className="flex justify-between text-sm text-slate-500 mb-1">
-                <span>{completedCount} of {totalCount} done</span>
-                {completedCount > 0 && (
-                  <button
-                    onClick={clearCompleted}
-                    className="text-rose-400 hover:text-rose-300"
-                  >
-                    Clear done
-                  </button>
-                )}
-              </div>
-              <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-emerald-500 transition-all duration-300"
-                  style={{ width: `${(completedCount / totalCount) * 100}%` }}
-                />
-              </div>
-            </div>
+            <p className="text-slate-500 text-sm mt-2">{totalCount} item{totalCount !== 1 ? 's' : ''}</p>
           )}
         </div>
       </header>
 
       {/* Main content */}
       <main className="max-w-lg mx-auto px-4 py-4">
-        {/* Quick add buttons */}
-        {quickAddItems.length > 0 && (
-          <div className="mb-4">
-            <div className="flex flex-wrap gap-2">
-              {quickAddItems.map((item) => (
-                <button
-                  key={item.name}
-                  onClick={() => addItem(item.name)}
-                  className="px-3 py-1.5 bg-slate-800/50 hover:bg-slate-700 text-slate-300 rounded-full text-sm transition-colors border border-slate-700"
-                >
-                  + {item.name}
-                </button>
-              ))}
-            </div>
-          </div>
+        {/* Swipe hint */}
+        {totalCount > 0 && (
+          <p className="text-slate-600 text-xs text-center mb-3">
+            Swipe left to remove
+          </p>
         )}
-
-        {/* Swipe hint - shown once */}
-        <p className="text-slate-600 text-xs text-center mb-3">
-          Tap to complete • Swipe left to delete
-        </p>
 
         {/* Shopping list */}
         <div className="space-y-2">
@@ -606,37 +516,27 @@ export default function App() {
               <SwipeableItem
                 key={id}
                 onDelete={() => deleteItem(id)}
-                onTap={() => toggleItem(id)}
               >
                 <div
-                  className={`flex items-center gap-3 p-4 rounded-2xl border transition-all ${
-                    item.completed 
-                      ? 'bg-slate-800/30 border-slate-800' 
-                      : 'bg-slate-800/50 border-slate-700'
-                  }`}
-                  style={!item.completed ? { 
+                  className="flex items-center gap-3 p-4 rounded-2xl border transition-all"
+                  style={{ 
                     backgroundColor: itemColour.bg,
                     borderColor: `${itemColour.value}40`
-                  } : {}}
+                  }}
                 >
                   {/* Colour indicator */}
                   <div
-                    className="w-3 h-3 rounded-full colour-dot flex-shrink-0"
-                    style={{ backgroundColor: item.completed ? '#64748b' : itemColour.value }}
+                    className="w-3 h-3 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: itemColour.value }}
                   />
                   
                   {/* Item name */}
                   <span
-                    className={`flex-1 ${item.completed ? 'text-slate-500 line-through' : 'text-white'}`}
+                    className="flex-1 text-white"
                     style={textStyle}
                   >
                     {item.name}
                   </span>
-                  
-                  {/* Completed checkmark */}
-                  {item.completed && (
-                    <Check className="w-5 h-5 text-emerald-500 flex-shrink-0" />
-                  )}
                 </div>
               </SwipeableItem>
             );
@@ -648,7 +548,7 @@ export default function App() {
           <div className="text-center py-16">
             <ShoppingCart className="w-16 h-16 text-slate-700 mx-auto mb-4" />
             <p className="text-slate-500" style={textStyle}>Your list is empty</p>
-            <p className="text-slate-600 text-sm mt-1">Add items using the button below</p>
+            <p className="text-slate-600 text-sm mt-1">Add items below</p>
           </div>
         )}
       </main>
@@ -657,6 +557,14 @@ export default function App() {
       <div className="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4">
         <div className="max-w-lg mx-auto relative">
           <div className="flex gap-2">
+            {/* History button */}
+            <button
+              onClick={() => setShowHistory(true)}
+              className="p-4 bg-slate-800 border border-slate-700 text-slate-400 hover:text-white rounded-xl transition-colors"
+            >
+              <Clock className="w-6 h-6" />
+            </button>
+            
             <div className="flex-1 relative">
               <input
                 type="text"
@@ -693,24 +601,67 @@ export default function App() {
 
           {/* Suggestions dropdown */}
           {showSuggestions && suggestions.length > 0 && (
-            <div className="absolute bottom-full left-0 right-0 mb-2 bg-slate-800 border border-slate-700 rounded-xl overflow-hidden shadow-xl">
+            <div className="absolute bottom-full left-0 right-0 mb-2 ml-16 bg-slate-800 border border-slate-700 rounded-xl overflow-hidden shadow-xl">
               {suggestions.map((item) => (
                 <button
                   key={item.name}
                   onClick={() => addItem(item.name)}
-                  className="w-full p-3 text-left text-white hover:bg-slate-700 transition-colors flex items-center justify-between"
+                  className="w-full p-3 text-left text-white hover:bg-slate-700 transition-colors"
                   style={smallerStyle}
                 >
-                  <span>{item.name}</span>
-                  {item.count > 0 && (
-                    <span className="text-slate-500 text-sm">used {item.count}x</span>
-                  )}
+                  {item.name}
                 </button>
               ))}
             </div>
           )}
         </div>
       </div>
+
+      {/* History modal */}
+      {showHistory && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowHistory(false)}
+        >
+          <div 
+            className="bg-slate-800 w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 max-h-[70vh] overflow-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-display font-bold text-white flex items-center gap-2">
+                <Clock className="w-5 h-5" />
+                Recent Items
+              </h2>
+              <button onClick={() => setShowHistory(false)} className="text-slate-400 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {historyItems.length > 0 ? (
+              <div className="space-y-2">
+                {historyItems.map((item) => (
+                  <button
+                    key={item.name}
+                    onClick={() => {
+                      addItem(item.name);
+                      setShowHistory(false);
+                    }}
+                    className="w-full p-4 bg-slate-700/50 hover:bg-slate-700 rounded-xl text-left text-white transition-colors flex items-center gap-3"
+                    style={textStyle}
+                  >
+                    <Plus className="w-5 h-5 text-slate-400" />
+                    {item.name}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-slate-500">No recent items yet</p>
+                <p className="text-slate-600 text-sm mt-1">Items you add will appear here</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* List picker modal */}
       {showListPicker && (
@@ -750,9 +701,6 @@ export default function App() {
                     className="flex-1 text-left"
                   >
                     <span className="text-white font-medium" style={textStyle}>{list.name}</span>
-                    <span className="block text-sm text-slate-400">
-                      {Object.keys(items).length} items
-                    </span>
                   </button>
                   
                   {Object.keys(lists).length > 1 && (
