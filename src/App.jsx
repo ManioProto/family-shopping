@@ -813,7 +813,7 @@ export default function App() {
               <input
                 type="range"
                 min="14"
-                max="28"
+                max="42"
                 value={textSize}
                 onChange={(e) => {
                   const size = parseInt(e.target.value);
