@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, Trash2, Check, Settings, X, ShoppingCart, List, ChevronDown, Users, Palette } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Plus, Check, Settings, X, ShoppingCart, List, ChevronDown, Users, Palette, Trash2 } from 'lucide-react';
 import { database, isFirebaseConfigured } from './firebase';
 import { ref, onValue, set, push, remove, update } from 'firebase/database';
 
@@ -23,6 +23,76 @@ const PRESET_ITEMS = [
   'Yogurt', 'Cream', 'Cereal', 'Honey', 'Garlic', 'Lemons',
   'Bacon', 'Mince', 'Toilet Paper', 'Dish Soap', 'Laundry Powder'
 ];
+
+// Swipeable Item Component
+function SwipeableItem({ children, onDelete, onTap }) {
+  const [translateX, setTranslateX] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
+  const startX = useRef(0);
+  const currentX = useRef(0);
+  const containerRef = useRef(null);
+
+  const handleTouchStart = (e) => {
+    startX.current = e.touches[0].clientX;
+    currentX.current = e.touches[0].clientX;
+    setIsSwiping(true);
+  };
+
+  const handleTouchMove = (e) => {
+    if (!isSwiping) return;
+    currentX.current = e.touches[0].clientX;
+    const diff = currentX.current - startX.current;
+    // Only allow swiping left (negative values)
+    if (diff < 0) {
+      setTranslateX(Math.max(diff, -100));
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsSwiping(false);
+    const diff = currentX.current - startX.current;
+    
+    // If swiped far enough left, delete
+    if (diff < -80) {
+      setTranslateX(-100);
+      setTimeout(() => onDelete(), 200);
+    } else if (Math.abs(diff) < 10) {
+      // It was a tap, not a swipe
+      onTap();
+      setTranslateX(0);
+    } else {
+      // Reset position
+      setTranslateX(0);
+    }
+  };
+
+  return (
+    <div className="relative overflow-hidden rounded-2xl">
+      {/* Delete background */}
+      <div className="absolute inset-0 bg-rose-600 flex items-center justify-end pr-6 rounded-2xl">
+        <span className="text-white font-medium">Delete</span>
+      </div>
+      
+      {/* Swipeable content */}
+      <div
+        ref={containerRef}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onClick={() => {
+          if (translateX === 0) onTap();
+        }}
+        style={{
+          transform: `translateX(${translateX}px)`,
+          transition: isSwiping ? 'none' : 'transform 0.2s ease-out'
+        }}
+        className="relative cursor-pointer"
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   // User state
@@ -522,67 +592,53 @@ export default function App() {
           </div>
         )}
 
+        {/* Swipe hint - shown once */}
+        <p className="text-slate-600 text-xs text-center mb-3">
+          Tap to complete • Swipe left to delete
+        </p>
+
         {/* Shopping list */}
         <div className="space-y-2">
           {sortedItems.map(([id, item]) => {
             const itemColour = getUserColour(item.addedBy);
-            const addedByUser = allUsers[item.addedBy];
             
             return (
-              <div
+              <SwipeableItem
                 key={id}
-                className={`list-item flex items-center gap-3 p-4 rounded-2xl border transition-all ${
-                  item.completed 
-                    ? 'bg-slate-800/30 border-slate-800' 
-                    : 'bg-slate-800/50 border-slate-700'
-                }`}
-                style={!item.completed ? { 
-                  backgroundColor: itemColour.bg,
-                  borderColor: `${itemColour.value}40`
-                } : {}}
+                onDelete={() => deleteItem(id)}
+                onTap={() => toggleItem(id)}
               >
-                {/* Colour indicator */}
                 <div
-                  className="w-3 h-3 rounded-full colour-dot flex-shrink-0"
-                  style={{ backgroundColor: itemColour.value }}
-                  title={addedByUser?.name || 'Unknown'}
-                />
-                
-                {/* Checkbox */}
-                <button
-                  onClick={() => toggleItem(id)}
-                  className={`w-7 h-7 rounded-lg border-2 flex items-center justify-center flex-shrink-0 transition-all ${
-                    item.completed
-                      ? 'bg-emerald-600 border-emerald-600'
-                      : 'border-slate-500 hover:border-emerald-500'
+                  className={`flex items-center gap-3 p-4 rounded-2xl border transition-all ${
+                    item.completed 
+                      ? 'bg-slate-800/30 border-slate-800' 
+                      : 'bg-slate-800/50 border-slate-700'
                   }`}
+                  style={!item.completed ? { 
+                    backgroundColor: itemColour.bg,
+                    borderColor: `${itemColour.value}40`
+                  } : {}}
                 >
-                  {item.completed && <Check className="w-4 h-4 text-white" />}
-                </button>
-                
-                {/* Item name */}
-                <div className="flex-1 min-w-0">
+                  {/* Colour indicator */}
+                  <div
+                    className="w-3 h-3 rounded-full colour-dot flex-shrink-0"
+                    style={{ backgroundColor: item.completed ? '#64748b' : itemColour.value }}
+                  />
+                  
+                  {/* Item name */}
                   <span
-                    className={`block truncate ${item.completed ? 'text-slate-500 line-through' : 'text-white'}`}
+                    className={`flex-1 ${item.completed ? 'text-slate-500 line-through' : 'text-white'}`}
                     style={textStyle}
                   >
                     {item.name}
                   </span>
-                  {addedByUser && (
-                    <span className="text-xs text-slate-500">
-                      Added by {addedByUser.name}
-                    </span>
+                  
+                  {/* Completed checkmark */}
+                  {item.completed && (
+                    <Check className="w-5 h-5 text-emerald-500 flex-shrink-0" />
                   )}
                 </div>
-                
-                {/* Delete */}
-                <button
-                  onClick={() => deleteItem(id)}
-                  className="p-2 text-slate-500 hover:text-rose-400 transition-colors flex-shrink-0"
-                >
-                  <Trash2 className="w-5 h-5" />
-                </button>
-              </div>
+              </SwipeableItem>
             );
           })}
         </div>
